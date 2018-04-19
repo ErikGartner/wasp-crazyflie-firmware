@@ -212,21 +212,22 @@ static void stabilizerTask(void* param)
       // Parameter tab in the Crazyflie Client
 
         float margin = 2.f;
+        float damper = 0.4f;
         if (yawError > margin)
         {
-            // Spin clockwise.
-            u[0] = yawCtrlOffset;
-            u[1] = yawCtrlOffset * 0.3f;
-            u[2] = yawCtrlOffset;
-            u[3] = yawCtrlOffset * 0.3f;
+            // Spin counter-clockwise.
+            u[0] = yawCtrlOffset * damper;
+            u[1] = yawCtrlOffset;
+            u[2] = yawCtrlOffset * damper;
+            u[3] = yawCtrlOffset;
         }
         else if (yawError < -margin)
         {
-            // Spin counter-clockwise.
-            u[0] = yawCtrlOffset * 0.3f;
-            u[1] = yawCtrlOffset;
-            u[2] = yawCtrlOffset * 0.3f;
-            u[3] = yawCtrlOffset;
+            // Spin clockwise.
+            u[0] = yawCtrlOffset;
+            u[1] = yawCtrlOffset * damper;
+            u[2] = yawCtrlOffset;
+            u[3] = yawCtrlOffset * damper;
         }
         else
         {
