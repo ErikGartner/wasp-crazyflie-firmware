@@ -179,9 +179,9 @@ static void stabilizerTask(void* param)
     // This allows us to test the controller without having to
     // touch the drone to change its angle or enter different reference
     // values
-    if (tick % 3000 == 0) {
-      yawCtrlRef = -yawCtrlRef;
-    }
+    /* if (tick % 3000 == 0) { */
+    /*   yawCtrlRef = -yawCtrlRef; */
+    /* } */
 
     // Calculate the control error and make sure that the angle error stays
     // within the interval (-180,180]. Otherwise, you might get error 350 degs
@@ -210,10 +210,33 @@ static void stabilizerTask(void* param)
       //
       // You can use this controller by etting yawCtrlMode to 1 in the
       // Parameter tab in the Crazyflie Client
-      u[0] = yawCtrlOffset;
-      u[1] = yawCtrlOffset;
-      u[2] = yawCtrlOffset;
-      u[3] = yawCtrlOffset;
+
+        float margin = 2.f;
+        if (yawError > margin)
+        {
+            // Spin clockwise.
+            u[0] = yawCtrlOffset;
+            u[1] = yawCtrlOffset * 0.3f;
+            u[2] = yawCtrlOffset;
+            u[3] = yawCtrlOffset * 0.3f;
+        }
+        else if (yawError < -margin)
+        {
+            // Spin counter-clockwise.
+            u[0] = yawCtrlOffset * 0.3f;
+            u[1] = yawCtrlOffset;
+            u[2] = yawCtrlOffset * 0.3f;
+            u[3] = yawCtrlOffset;
+        }
+        else
+        {
+            u[0] = 0.f;
+            u[1] = 0.f;
+            u[2] = 0.f;
+            u[3] = 0.f;
+        }
+
+
     } else if (yawCtrlMode == 2) {
       //
       // YOUR JOB IS TO CREATE A FEEDBACK CONTROLLER here, i.e. an
