@@ -117,7 +117,6 @@ static float yawCtrlKP = 0;  /* P gain in the PID */
 static float yawCtrlKI = 0;  /* I gain in the PID */
 static float yawCtrlKD = 0;  /* D gain in the PID */
 static float yawCtrlRef = 10;  /* The reference/target yaw angle in degrees */
-static float yawU = 0;  /* Control signal for yaw control. */
 static float yawError = 0;  /* Yaw control error. */
 
 static void yawPowerDistribution(const float u[4]);
@@ -300,7 +299,7 @@ PARAM_ADD(PARAM_FLOAT, mYawCtrlRef, &yawCtrlRef)
 PARAM_GROUP_STOP(yawCtrlPar)
 
 LOG_GROUP_START(yawCtrlLog)
-LOG_ADD(LOG_FLOAT, lU, &yawU)
+LOG_ADD(LOG_FLOAT, lU, &yawCtrlRef)
 LOG_ADD(LOG_FLOAT, lError, &yawError)
 LOG_ADD(LOG_UINT8, lYawCtrlMode, &yawCtrlMode)
 LOG_ADD(LOG_FLOAT, lYaw, &state.attitude.yaw)
