@@ -44,6 +44,9 @@
 #include "estimator_kalman.h"
 #include "estimator.h"
 
+#include "motors.h"
+#include "pm.h"
+
 static bool isInit;
 static bool emergencyStop = false;
 static int emergencyStopTimeout = EMERGENCY_STOP_TIMEOUT_DISABLED;
@@ -53,6 +56,8 @@ static setpoint_t setpoint;
 static sensorData_t sensorData;
 static state_t state;
 static control_t control;
+
+const float LOW_BATTERY = 3.3f;
 
 static void stabilizerTask(void* param);
 
@@ -104,6 +109,42 @@ static void checkEmergencyStopTimeout()
  * (ie. returning without modifying the output structure).
  */
 
+#define YAW_CONTROL_MODE
+#ifdef YAW_CONTROL_MODE
+static int yawCtrlMode = 0;  /* 0 is inactive, higher numbers for different modes of control */
+static float yawCtrlOffset = 0.0;  /* When the control is active, we let all motors get this PWM duty cycle signal as a base. This value should be 0-1 */
+static float yawCtrlKP = 0;  /* P gain in the PID */
+static float yawCtrlKI = 0;  /* I gain in the PID */
+static float yawCtrlKD = 0;  /* D gain in the PID */
+static float yawCtrlRef = 10;  /* The reference/target yaw angle in degrees */
+static float yawU = 0;  /* Control signal for yaw control. */
+static float yawError = 0;  /* Yaw control error. */
+
+static void yawPowerDistribution(const float u[4]);
+static float limitDutyCycle(float u);
+
+void yawPowerDistribution(const float u[4]) {
+  // Limit the control signals to ensure that they are
+  // i)  valid and
+  // ii) does not make the drone fly away
+  // Then map the control signals from numbers 0-1 to 0-65535, and send to motors
+  for (int i=0; i<4; ++i)
+    motorsSetRatio(i, (int16_t) (65535*limitDutyCycle(u[i])));
+}
+
+float limitDutyCycle(float u)
+{
+  // Props cannot turn the other way
+  if (u < 0) u = 0;
+
+  // Make sure they do not spin so fast that the drone lifts
+  float maxDuty = 0.6;
+  if (u > maxDuty) u = maxDuty;
+
+  return u;
+}
+#endif
+
 static void stabilizerTask(void* param)
 {
   uint32_t tick;
@@ -120,7 +161,7 @@ static void stabilizerTask(void* param)
   }
   // Initialize tick to something else then 0
   tick = 1;
-
+  
   while(1) {
     vTaskDelayUntil(&lastWakeTime, F2T(RATE_MAIN_LOOP));
 
@@ -133,13 +174,76 @@ static void stabilizerTask(void* param)
 
     stateController(&control, &setpoint, &sensorData, &state, tick);
 
+#ifdef YAW_CONTROL_MODE
+    // Switch sign of reference point every N ticks.
+    // This allows us to test the controller without having to
+    // touch the drone to change its angle or enter different reference
+    // values
+    if (tick % 3000 == 0) {
+      yawCtrlRef = -yawCtrlRef;
+    }
+
+    // Calculate the control error and make sure that the angle error stays
+    // within the interval (-180,180]. Otherwise, you might get error 350 degs
+    // when the reference signal is 175 and the current yaw is -175, when
+    // in fact the error is -10.
+    yawError = yawCtrlRef - state.attitude.yaw;
+    while (yawError > 180)
+       yawError -= 360;
+    while (yawError < -180)
+       yawError += 360;
+
+    // Here we can define a number of different controllers (modes).
+    // mode=0 is assumed to refer to the case where you do not do anything
+
+    // The putput of our controller will be put into the array u.
+    // It is assumed that we work with the duty cycle, i.e. a number between
+    // 0 and 1 as the control signal. This will then map that to the
+    // PWM values 0-65535 at the end.
+    //
+    // We set the control signal to 0 to start with
+    float u[4] = { 0., 0., 0., 0. };
+    if (yawCtrlMode == 1) {
+      // The following 4 lines will make all props spin with the same
+      // speed, defined by the parameter yawCtrlOffset which you can set in
+      // the Parameter tab.
+      //
+      // You can use this controller by etting yawCtrlMode to 1 in the
+      // Parameter tab in the Crazyflie Client
+      u[0] = yawCtrlOffset;
+      u[1] = yawCtrlOffset;
+      u[2] = yawCtrlOffset;
+      u[3] = yawCtrlOffset;
+    } else if (yawCtrlMode == 2) {
+      //
+      // YOUR JOB IS TO CREATE A FEEDBACK CONTROLLER here, i.e. an
+      // algorithm that makes the yawError defined above go to zero by
+      // an appropriate choice of control signals to motors M1-M4. In other
+      // words calculate u[0], ..., u[3] based on yawError and remember that the
+      // values should be 0-1, where 0 means motors completely off and 1 means
+      // max thrust.
+      //
+      // The controller should work for different values of yawCtrlRef
+      //
+      // You would activet this controller by setting yawCtrlMode to 2 in
+      // the Parameter tab in the Crazyflie Client
+    }
+#endif
+
     checkEmergencyStopTimeout();
 
-    if (emergencyStop) {
+    // Perform emergency stop is battery level is too low!
+    // Or the battery might be damaged.
+    emergencyStop |= pmGetBatteryVoltageMin() < LOW_BATTERY;
+
+    if (emergencyStop)
       powerStop();
-    } else {
+#ifdef YAW_CONTROL_MODE
+    else if (yawCtrlMode) // If active, execute our control law
+      yawPowerDistribution(u);
+#endif
+    else  // Execute default control law
       powerDistribution(&control);
-    }
 
     tick++;
   }
@@ -160,6 +264,26 @@ void stabilizerSetEmergencyStopTimeout(int timeout)
   emergencyStop = false;
   emergencyStopTimeout = timeout;
 }
+
+#ifdef YAW_CONTROL_MODE
+PARAM_GROUP_START(yawCtrlPar)
+PARAM_ADD(PARAM_UINT8, mYawCtrlMode, &yawCtrlMode)
+PARAM_ADD(PARAM_FLOAT, myawCtrlOffset, &yawCtrlOffset)
+PARAM_ADD(PARAM_FLOAT, mYawCtrlKP, &yawCtrlKP)
+PARAM_ADD(PARAM_FLOAT, mYawCtrlKI, &yawCtrlKI)
+PARAM_ADD(PARAM_FLOAT, mYawCtrlKD, &yawCtrlKD)
+PARAM_ADD(PARAM_FLOAT, mYawCtrlRef, &yawCtrlRef)
+PARAM_GROUP_STOP(yawCtrlPar)
+
+LOG_GROUP_START(yawCtrlLog)
+LOG_ADD(LOG_FLOAT, lU, &yawU)
+LOG_ADD(LOG_FLOAT, lError, &yawError)
+LOG_ADD(LOG_UINT8, lYawCtrlMode, &yawCtrlMode)
+LOG_ADD(LOG_FLOAT, lYaw, &state.attitude.yaw)
+LOG_ADD(LOG_FLOAT, lYawRef, &yawCtrlRef)
+LOG_ADD(LOG_FLOAT, lYaw, &state.attitude.yaw)
+LOG_GROUP_STOP(yawCtrlLog)
+#endif
 
 LOG_GROUP_START(ctrltarget)
 LOG_ADD(LOG_FLOAT, roll, &setpoint.attitude.roll)
